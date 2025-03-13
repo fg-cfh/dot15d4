@@ -76,8 +76,8 @@ where
         );
 
         match select::select(mac_service.run(), phy_service.run()).await {
-            Either::First(_) => panic!("Tasks should never terminate, MAC MCPS just did"),
-            Either::Second(_) => panic!("Tasks should never terminate, MAC MLME just did"),
+            Either::First(_) => panic!("Tasks should never terminate, MAC service just did"),
+            Either::Second(_) => panic!("Tasks should never terminate, PHY service just did"),
         }
     }
 
