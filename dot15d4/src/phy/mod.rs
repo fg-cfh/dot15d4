@@ -106,7 +106,7 @@ where
 {
     /// Run the main event loop used by the PHY sublayer for its operation. For
     /// now, the loop waits for either receiving a frame from the MAC sublayer
-    ///  or receiving a frame from the radio.
+    /// or receiving a frame from the radio.
     pub async fn run(&mut self) -> ! {
         self.radio.get_mut().enable().await; // Wake up radio
         let mut radio_guard = self.radio.lock().await;
