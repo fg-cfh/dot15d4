@@ -1,10 +1,10 @@
 pub mod acknowledgment;
-pub mod command;
 pub mod constants;
 pub mod mcps;
 pub mod mlme;
 pub mod neighbors;
 pub mod pib;
+pub mod primitives;
 pub mod tsch;
 pub mod utils;
 
@@ -30,7 +30,7 @@ use rand_core::RngCore;
 #[cfg(feature = "rtos-trace")]
 use crate::trace::{MAC_INDICATION, MAC_REQUEST};
 
-pub use command::{MacIndication, MacRequest};
+pub use primitives::{MacIndication, MacRequest};
 
 /// MAC-related error propagated to higher layer
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
