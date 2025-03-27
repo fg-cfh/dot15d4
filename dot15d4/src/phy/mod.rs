@@ -29,7 +29,7 @@ use self::{
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Error {
-    /// Ack failed, after to many retransmissions
+    /// Ack failed, after too many retransmissions
     AckFailed,
     /// The buffer did not follow the correct device structure
     InvalidDeviceStructure,
@@ -52,7 +52,7 @@ pub struct FrameBuffer {
     /// If you would like to support a radio that needs more than 128 bytes,
     /// please file a PR.
     pub buffer: [u8; 128],
-    /// Whether or not the buffer is ready to be read from
+    /// Whether the buffer is ready to be read from
     pub dirty: bool,
 }
 
