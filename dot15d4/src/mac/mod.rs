@@ -137,7 +137,7 @@ where
                 Either::First(request) => {
                     #[cfg(feature = "rtos-trace")]
                     rtos_trace::trace::task_exec_begin(MAC_REQUEST);
-                    self.handle_command(command).await;
+                    self.handle_request(request).await;
                 }
                 Either::Second(_) => {
                     #[cfg(feature = "rtos-trace")]
@@ -211,8 +211,8 @@ where
         }
     }
 
-    async fn handle_command(&mut self, command: MacRequest) {
-        match command {
+    async fn handle_request(&mut self, request: MacRequest) {
+        match request {
             MacRequest::McpsDataRequest(mut request) => {
                 // TODO: handle errors with upper layer
                 let _ = self.mcps_data_request(&mut request.buffer).await;
