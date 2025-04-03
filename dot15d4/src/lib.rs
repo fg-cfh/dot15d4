@@ -58,6 +58,11 @@ where
     TIMER: DelayNs + Clone,
 {
     pub async fn run(&mut self) -> ! {
+        rtos_trace::trace::marker_end(0);
+
+        #[cfg(feature = "rtos-trace")]
+        self::trace::instrument();
+
         let (mut tx, mut rx) = (Channel::new(), Channel::new());
         let (tx_send, tx_recv) = tx.split();
         let (rx_send, rx_recv) = rx.split();
@@ -104,4 +109,25 @@ where
     //     )
     //     .await;
     // }
+}
+
+#[cfg(feature = "rtos-trace")]
+pub mod trace {
+    #[cfg(feature = "defmt")]
+    compile_error!(
+        "Tracing cannot be enabled at the same time as defmt. Logs will be visible in the SystemView application if the 'log' feature is enabled."
+    );
+
+    pub const MAC_INDICATION: u32 = 0;
+    pub const MAC_REQUEST: u32 = 1;
+    pub const PHY_TX: u32 = 2;
+    pub const PHY_RX: u32 = 3;
+
+    /// Instrument the library for tracing.
+    pub(super) fn instrument() {
+        rtos_trace::trace::task_new_stackless(MAC_INDICATION, "MAC indication\0", 0);
+        rtos_trace::trace::task_new_stackless(MAC_REQUEST, "MAC request\0", 0);
+        rtos_trace::trace::task_new_stackless(PHY_TX, "PHY Tx\0", 0);
+        rtos_trace::trace::task_new_stackless(PHY_RX, "PHY Rx\0", 0);
+    }
 }

@@ -27,6 +27,9 @@ use dot15d4_frame::{Frame, FrameType};
 use embedded_hal_async::delay::DelayNs;
 use rand_core::RngCore;
 
+#[cfg(feature = "rtos-trace")]
+use crate::trace::{MAC_INDICATION, MAC_REQUEST};
+
 pub use command::{MacIndication, MacRequest};
 
 /// MAC-related error propagated to higher layer
@@ -131,8 +134,16 @@ where
             )
             .await
             {
-                Either::First(command) => self.handle_command(command).await,
-                Either::Second(_) => self.handle_indication(&mut indication).await,
+                Either::First(request) => {
+                    #[cfg(feature = "rtos-trace")]
+                    rtos_trace::trace::task_exec_begin(MAC_REQUEST);
+                    self.handle_command(command).await;
+                }
+                Either::Second(_) => {
+                    #[cfg(feature = "rtos-trace")]
+                    rtos_trace::trace::task_exec_begin(MAC_INDICATION);
+                    self.handle_indication(&mut indication).await;
+                }
             };
         }
     }
