@@ -18,6 +18,9 @@ use crate::sync::{
     Either,
 };
 
+#[cfg(feature = "rtos-trace")]
+use crate::trace::{PHY_RX, PHY_TX};
+
 use self::{
     config::{RxConfig, TxConfig},
     radio::futures::{receive, transmit},
@@ -119,9 +122,13 @@ where
             .await
             {
                 Either::First(_) => {
+                    #[cfg(feature = "rtos-trace")]
+                    rtos_trace::trace::task_exec_begin(PHY_RX);
                     self.mac_send(core::mem::take(&mut rx_frame)).await;
                 }
                 Either::Second(mut tx_frame) => {
+                    #[cfg(feature = "rtos-trace")]
+                    rtos_trace::trace::task_exec_begin(PHY_TX);
                     self.transmit_frame(&mut tx_frame, &mut radio_guard).await;
                     self.tx_done.send_async(()).await;
                 }
