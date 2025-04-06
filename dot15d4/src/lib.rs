@@ -58,6 +58,7 @@ where
     TIMER: DelayNs + Clone,
 {
     pub async fn run(&mut self) -> ! {
+        #[cfg(feature = "rtos-trace")]
         rtos_trace::trace::marker_end(0);
 
         #[cfg(feature = "rtos-trace")]
