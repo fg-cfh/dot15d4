@@ -1,0 +1,32 @@
+[package]
+edition = "2021"
+name = "mpmc_channel"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+allocator-api2 = { version = "0.3", default-features = false }
+bitmaps = { version = "3.2", default-features = false }
+embassy-sync = "0.6"
+embassy-executor = { version = "0.7", features = ["executor-thread"] }
+embassy-time = "0.4"
+generic-array = "1.2"
+heapless = "0.8"
+static_cell = "2.1"
+typenum = "1.18"
+
+cortex-m-rt = { version = "0.7", optional = true }
+
+env_logger = { version = "0.11", optional = true }
+log = { version = "0.4", optional = true }
+
+[features]
+cortex-m = ["dep:cortex-m-rt", "embassy-executor/arch-cortex-m"]
+std = [
+    "dep:env_logger",
+    "dep:log",
+    "bitmaps/std",
+    "allocator-api2/std",
+    "embassy-time/std",
+    "embassy-executor/arch-std",
+]

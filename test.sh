@@ -9,8 +9,8 @@ cargo test -p dot15d4-frame3 --no-default-features
 echo "TEST: security"
 cargo test -p dot15d4-frame3 --no-default-features --features=security
 
-echo "TEST: tsch"
-cargo test -p dot15d4-frame3 --no-default-features --features=tsch
+echo "TEST: ies"
+cargo test -p dot15d4-frame3 --no-default-features --features=ies
 
-echo "TEST: security,tsch"
-cargo test -p dot15d4-frame3 --no-default-features --features=security,tsch
+echo "TEST: security,ies"
+cargo test -p dot15d4-frame3 --no-default-features --features=security,ies
