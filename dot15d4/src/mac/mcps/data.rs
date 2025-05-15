@@ -1,5 +1,5 @@
-use crate::phy::radio::{Radio, RadioFrameMut};
-use crate::{mac::MacService, phy::FrameBuffer, upper::UpperLayer};
+use crate::mac::{MacIndication, MacService};
+use dot15d4_frame3::{driver::DriverConfig, mpdu::MpduFrame, payload::FramePayload};
 use embedded_hal_async::delay::DelayNs;
 use rand_core::RngCore;
 
@@ -23,7 +23,8 @@ pub enum DataError {
 }
 
 pub struct DataRequest {
-    pub buffer: FrameBuffer,
+    /// The payload to be sent.
+    pub payload: FramePayload,
 }
 
 pub struct DataConfirm {
@@ -33,47 +34,43 @@ pub struct DataConfirm {
     pub acked: bool,
 }
 
-#[derive(Default)]
 pub struct DataIndication {
-    /// buffer containing the received frame
-    pub buffer: FrameBuffer,
+    /// The received payload.
+    pub payload: FramePayload,
     /// Timestamp of frame reception
     pub timestamp: u32,
 }
 
-impl<Rng, U, TIMER, R> MacService<'_, Rng, U, TIMER, R>
-where
-    Rng: RngCore,
-    U: UpperLayer,
-    TIMER: DelayNs + Clone,
-    R: Radio,
-    for<'a> R::RadioFrame<&'a mut [u8]>: RadioFrameMut<&'a mut [u8]>,
-    for<'a> R::TxToken<'a>: From<&'a mut [u8]>,
+impl<'svc, Rng: RngCore, TIMER: DelayNs + Clone, Config: DriverConfig>
+    MacService<'svc, Rng, TIMER, Config>
 {
     /// Requests the transfer of data to another device
     pub async fn mcps_data_request(
         &self,
-        frame: &mut FrameBuffer,
+        data_request: DataRequest,
     ) -> Result<DataConfirm, DataError> {
-        let sequence_number = Self::set_ack(frame);
+        let mut mpdu = data_request.payload.into_mpdu_frame();
+        let sequence_number = Self::set_ack(&mut mpdu);
 
-        self.phy_send(core::mem::take(frame)).await;
+        self.radio_send(mpdu.into_radio_frame()).await;
         let acked = match sequence_number {
             Some(sequence_number) => self.wait_for_ack(sequence_number).await,
             _ => true,
         };
         Ok(DataConfirm {
-            // TODO: support timestamp
+            // TODO: Set a timestamp once we support times TX in the driver.
             timestamp: 0,
             acked,
         })
     }
 
-    pub async fn mcps_data_indication(&self, indication: DataIndication) {
-        self.upper_layer
-            .process_mac_indication(crate::mac::primitives::MacIndication::McpsData(
-                indication,
-            ))
-            .await;
+    /// Extract an MCPS data indication from the given MPDU.
+    pub async fn mcps_data_indication(&self, mpdu: MpduFrame) {
+        let data_indication = MacIndication::McpsData(DataIndication {
+            payload: FramePayload::from_mpdu_frame(mpdu),
+            // TODO: Set a timestamp once we support timed RX in the driver.
+            timestamp: 0,
+        });
+        self.indication_sender.send(data_indication).await;
     }
 }

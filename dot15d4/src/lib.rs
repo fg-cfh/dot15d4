@@ -7,81 +7,75 @@ extern crate std;
 #[macro_use]
 pub(crate) mod utils;
 
-pub use dot15d4_frame as frame;
+use core::marker::PhantomData;
+
+pub use dot15d4_frame3 as frame;
+use dot15d4_frame3::driver::DriverConfig;
+use mac::{MacBufferAllocator, MacIndicationSender, MacRequestReceiver};
+use radio::RadioTaskChannel;
 
 pub mod mac;
-pub mod phy;
+pub mod radio;
 pub mod sync;
 pub mod time;
-pub mod upper;
 
+use self::{mac::MacService, radio::DriverCoprocessor};
 use crate::{
-    phy::radio::{Radio, RadioFrameMut},
-    sync::{channel::Channel, mutex::Mutex, select, Either},
-    upper::UpperLayer,
+    radio::driver::RadioDriver,
+    sync::{mutex::Mutex, select, Either},
 };
 use embedded_hal_async::delay::DelayNs;
 use rand_core::RngCore;
 
-use self::{mac::MacService, phy::PhyService};
-
-pub struct Device<R: Radio, Rng, U: UpperLayer, TIMER> {
-    radio: Mutex<R>,
+pub struct Device<Config: DriverConfig, R: RadioDriver<Config>, Rng, TIMER> {
+    radio: R,
     rng: Mutex<Rng>,
-    upper_layer: U,
     timer: TIMER,
+    driver_config: PhantomData<Config>,
 }
 
-impl<R, Rng, U, TIMER> Device<R, Rng, U, TIMER>
+impl<Config, R, Rng, TIMER> Device<Config, R, Rng, TIMER>
 where
-    R: Radio,
+    Config: DriverConfig,
+    R: RadioDriver<Config>,
     Rng: RngCore,
-    U: UpperLayer,
 {
-    pub fn new(radio: R, rng: Rng, upper_layer: U, timer: TIMER) -> Self {
+    pub fn new(radio: R, rng: Rng, timer: TIMER) -> Self {
         Self {
-            radio: Mutex::new(radio),
+            radio,
             rng: Mutex::new(rng),
-            upper_layer,
             timer,
+            driver_config: PhantomData,
         }
     }
 }
 
-impl<R, Rng, U, TIMER> Device<R, Rng, U, TIMER>
-where
-    R: Radio,
-    for<'a> R::RadioFrame<&'a mut [u8]>: RadioFrameMut<&'a mut [u8]>,
-    for<'a> R::TxToken<'a>: From<&'a mut [u8]>,
-    Rng: RngCore,
-    U: UpperLayer,
-    TIMER: DelayNs + Clone,
+impl<Config: DriverConfig, R: RadioDriver<Config>, Rng: RngCore, TIMER: DelayNs + Clone>
+    Device<Config, R, Rng, TIMER>
 {
-    pub async fn run(&mut self) -> ! {
-        #[cfg(feature = "rtos-trace")]
+    pub async fn run<'upper_layer>(
+        mut self,
+        buffer_allocator: MacBufferAllocator,
+        request_receiver: MacRequestReceiver<'upper_layer>,
+        indication_sender: MacIndicationSender<'upper_layer>,
+    ) -> ! {
         #[cfg(feature = "rtos-trace")]
         self::trace::instrument();
 
-        let (mut tx, mut rx) = (Channel::new(), Channel::new());
-        let (tx_send, tx_recv) = tx.split();
-        let (rx_send, rx_recv) = rx.split();
-
-        let mut tx_done = Channel::new();
-        let (tx_done_send, tx_done_recv) = tx_done.split();
-
-        let mut phy_service = PhyService::new(&mut self.radio, tx_recv, rx_send, tx_done_send);
-        let mut mac_service = MacService::<'_, Rng, U, TIMER, R>::new(
+        let radio_task_channel = RadioTaskChannel::<Config>::new();
+        let driver_coprocessor = DriverCoprocessor::new(self.radio, radio_task_channel.receiver());
+        let mut mac_service = MacService::<'_, Rng, TIMER, Config>::new(
             &mut self.rng,
-            &mut self.upper_layer,
             self.timer.clone(),
-            rx_recv,
-            tx_send,
-            tx_done_recv,
+            buffer_allocator,
+            request_receiver,
+            indication_sender,
+            radio_task_channel.sender(),
         );
 
-        match select::select(mac_service.run(), phy_service.run()).await {
-            Either::First(_) => panic!("Tasks should never terminate, MAC service just did"),
-            Either::Second(_) => panic!("Tasks should never terminate, PHY service just did"),
+        match select::select(mac_service.run(), driver_coprocessor.run()).await {
+            Either::First(_) => panic!("MAC service terminated"),
+            Either::Second(_) => panic!("Driver coprocessor terminated"),
         }
     }
 

@@ -1,71 +1,76 @@
+use core::num::NonZeroU16;
+
 use crate::{
     mac::{
         constants::{MAC_AIFS_PERIOD, MAC_SIFS_PERIOD},
         MacService,
     },
-    phy::{
-        radio::{Radio, RadioFrame, RadioFrameMut, TxToken},
-        FrameBuffer,
-    },
+    radio::MAX_DRIVER_OVERHEAD,
     sync::{select, Either},
     time::Duration,
-    upper::UpperLayer,
 };
-use dot15d4_frame::{DataFrame, Frame, FrameBuilder};
+use dot15d4_frame3::{
+    driver::{DriverConfig, RadioFrame, RadioFrameRepr, RadioFrameSized, RadioFrameUnsized},
+    frame_control::FrameType,
+    mpdu::{imm_ack_frame, MpduFrame, IMM_ACK_FRAME_REPR},
+};
 use embedded_hal_async::delay::DelayNs;
 use rand_core::RngCore;
 
-impl<Rng, U, TIMER, R> MacService<'_, Rng, U, TIMER, R>
-where
-    Rng: RngCore,
-    U: UpperLayer,
-    TIMER: DelayNs + Clone,
-    R: Radio,
-    for<'a> R::RadioFrame<&'a mut [u8]>: RadioFrameMut<&'a mut [u8]>,
-    for<'a> R::TxToken<'a>: From<&'a mut [u8]>,
+use super::MacBufferAllocator;
+
+pub(crate) const ACK_MPDU_LENGTH: NonZeroU16 = IMM_ACK_FRAME_REPR.mpdu_length(0, false);
+pub(crate) const ACK_MPDU_SIZE: usize = ACK_MPDU_LENGTH.get() as usize;
+pub(crate) const MAX_ACK_BUFFER_SIZE: usize = ACK_MPDU_SIZE + MAX_DRIVER_OVERHEAD;
+
+impl<'svc, Rng: RngCore, TIMER: DelayNs + Clone, Config: DriverConfig>
+    MacService<'svc, Rng, TIMER, Config>
 {
-    /// Transmit acknowledgment for a frame that has been received.
-    /// Returns when acknowledgment has been transmitted by the radio.
-    ///
-    /// * `rx_frame` - Received Frame to acknowledge
-    /// * `ack_frame` - Frame buffer to use for sending acknowledgment
-    pub(crate) async fn transmit_ack(&self, ack_frame: &mut Option<FrameBuffer>) {
-        if let Some(ack_frame) = ack_frame {
-            self.phy_send(core::mem::take(ack_frame)).await;
-        }
+    /// Calculates the exact buffer size required for an ACK frame with the
+    /// given driver configuration.
+    const fn ack_buffer_size() -> usize {
+        ACK_MPDU_SIZE
+            + RadioFrameRepr::<Config, RadioFrameUnsized>::new().driver_overhead() as usize
     }
 
-    /// Prepare an acknowledgment frame if one has to be sent for the given
-    /// received frame.
+    pub(crate) fn allocate_tx_ack(
+        buffer_allocator: MacBufferAllocator,
+    ) -> RadioFrame<Config, RadioFrameSized> {
+        imm_ack_frame::<Config>(
+            0,
+            buffer_allocator
+                .try_allocate_buffer(Self::ack_buffer_size())
+                .expect("no capacity"),
+        )
+        .into_radio_frame()
+    }
+
+    /// Transmit acknowledgment for a frame that has been received if that frame
+    /// requests acknowledgement and contains a valid sequence number.
     ///
-    /// * `rx_frame` - Received frame to potentially acknowledge
-    /// * `ack_frame` - Mutable reference to the potential ack frame to
-    ///    generate.
-    pub(crate) fn prepare_ack(
-        &self,
-        rx_frame: &mut FrameBuffer,
-        ack_frame: &mut Option<FrameBuffer>,
-    ) {
-        let rx_frame = R::RadioFrame::new_checked(&mut rx_frame.buffer).unwrap();
-        let rx_frame = Frame::new(rx_frame.data()).unwrap();
-        if let Frame::Data(data_frame) = rx_frame {
-            if !data_frame.frame_control().ack_request() {
-                return;
-            }
-            // If frame has a sequence number, we send an ack
-            if let Some(sequence_number) = rx_frame.sequence_number() {
-                let ieee_repr = FrameBuilder::new_imm_ack(sequence_number)
-                    .finalize()
-                    .expect("A simple ACK should always be possible to build");
-                *ack_frame = Some(FrameBuffer::default());
-                let buffer = &mut ack_frame.as_mut().unwrap().buffer;
-                let ack_token = R::TxToken::from(buffer);
-                ack_token.consume(ieee_repr.buffer_len(), |buffer| {
-                    let mut frame = DataFrame::new_unchecked(&mut buffer[..ieee_repr.buffer_len()]);
-                    ieee_repr.emit(&mut frame);
-                });
-            }
+    /// Blocks until the acknowledgment has been transmitted over the radio.
+    ///
+    /// * `rx_mpdu` - Frame to be acknowledged
+    pub(crate) async fn transmit_ack(&self, rx_mpdu: &MpduFrame) {
+        if !rx_mpdu.frame_control().ack_request() {
+            return;
         }
+
+        let seq_num = rx_mpdu.sequence_number();
+        if seq_num.is_none() {
+            // TODO: This is an invalid frame which should be logged.
+            return;
+        }
+
+        // Safety: This function uses the pre-allocated Tx ACK frame
+        //         exclusively.
+        let mut tx_ack_mpdu = MpduFrame::from_radio_frame(self.tx_ack_frame.take().unwrap());
+        tx_ack_mpdu.set_sequence_number(seq_num.unwrap());
+
+        let tx_ack_frame = tx_ack_mpdu.into_radio_frame();
+        let reusable_tx_ack_frame = self.radio_send(tx_ack_frame).await;
+
+        self.tx_ack_frame.set(Some(reusable_tx_ack_frame));
     }
 
     /// Wait for the reception of an acknowledgment for a specific sequence
@@ -76,22 +81,46 @@ where
     /// * `sequence_number` - Sequence number of the frame waiting for ack
     pub(crate) async fn wait_for_ack(&self, sequence_number: u8) -> bool {
         let mut timer = self.timer.clone();
+
         // We expect an ACK to come back AIFS + time for an ACK to travel + SIFS (guard)
-        // An ACK is 3 bytes + 6 bytes (PHY header) long
-        // and should take around 288us at 250kbps to get back
+        //
+        // An Imm-ACK is 3 bytes + 6 bytes (PHY header) long and therefore
+        // should take around 288us at 250kbps to get back (2.4G O-QPSK).
+        //
+        // TODO: Calculate the delay based on PHY-specific AIFS, SIFS and symbol
+        //       period parameters provided by the driver.
         let delay = MAC_AIFS_PERIOD + MAC_SIFS_PERIOD + Duration::from_us(288);
 
         match select::select(
             async {
-                // We may receive multiple frame during that period of time.
+                // We may receive multiple frames during that period of time.
                 // non-matching frames are dropped.
+                // TODO: Non-matching frames should be handled normally, as the
+                //       ACK could simply have been lost and we're now dropping
+                //       legit frames from other devices until the timeout fires.
+                //       Actually, if we receive a non-ACK frame there's no use
+                //       in waiting for another ACK as ACKs are not resent. If
+                //       we change this, then we need to pass in a full-sized
+                //       buffer of course.
                 loop {
-                    let mut ack_frame = self.phy_receive().await;
-                    let ack_frame = R::RadioFrame::new_checked(&mut ack_frame.buffer).unwrap();
-                    if let Frame::Ack(ack_frame) = Frame::new(ack_frame.data()).unwrap() {
-                        if sequence_number == ack_frame.sequence_number() {
-                            break;
-                        }
+                    let rx_ack_mpdu =
+                        MpduFrame::from_radio_frame(self.radio_recv(Self::ack_buffer_size()).await);
+
+                    if !matches!(rx_ack_mpdu.frame_control().frame_type(), FrameType::Ack) {
+                        // TODO: Don't drop the received frame but handle it,
+                        //       see above.
+                        continue;
+                    }
+
+                    let seq_num = rx_ack_mpdu.sequence_number();
+                    if seq_num.is_none() {
+                        // TODO: log invalid frame
+                        continue;
+                    }
+
+                    if sequence_number == seq_num.unwrap() {
+                        // TODO: Don't continue but report NACK.
+                        break;
                     }
                 }
             },
@@ -112,19 +141,14 @@ where
     /// buffer content and frame addressing. If so, acknowledgment request is
     /// set in the frame.
     ///
-    /// * `frame` - Frame buffer to check and update, if necessary.
-    pub(crate) fn set_ack(frame: &mut FrameBuffer) -> Option<u8> {
-        let mut frame = R::RadioFrame::new_checked(&mut frame.buffer).unwrap();
-        if let Frame::Data(mut data_frame) = Frame::new(frame.data_mut()).unwrap() {
-            match data_frame.addressing().and_then(|addr| addr.dst_address()) {
-                Some(addr) if addr.is_unicast() => {
-                    data_frame.frame_control_mut().set_ack_request(true);
-                    data_frame.sequence_number()
-                }
-                _ => None,
+    /// * `frame` - MPDU to check and update, if necessary.
+    pub(crate) fn set_ack(mpdu: &mut MpduFrame) -> Option<u8> {
+        match mpdu.addressing().and_then(|addr| addr.dst_address()) {
+            Some(addr) if addr.is_unicast() => {
+                mpdu.frame_control().set_ack_request(true);
+                mpdu.sequence_number()
             }
-        } else {
-            None
+            _ => None,
         }
     }
 }

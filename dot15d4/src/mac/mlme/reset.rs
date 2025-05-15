@@ -1,5 +1,7 @@
-use crate::phy::radio::{Radio, RadioFrameMut};
-use crate::{mac::pib, upper::UpperLayer};
+use core::cell::RefCell;
+
+use crate::mac::pib;
+use dot15d4_frame3::driver::DriverConfig;
 use embedded_hal_async::delay::DelayNs;
 use rand_core::RngCore;
 
@@ -11,20 +13,14 @@ pub struct ResetConfirm {
 }
 
 #[allow(dead_code)]
-impl<Rng, U, TIMER, R> MacService<'_, Rng, U, TIMER, R>
-where
-    Rng: RngCore,
-    U: UpperLayer,
-    TIMER: DelayNs + Clone,
-    R: Radio,
-    for<'a> R::RadioFrame<&'a mut [u8]>: RadioFrameMut<&'a mut [u8]>,
-    for<'a> R::TxToken<'a>: From<&'a mut [u8]>,
+impl<'svc, Rng: RngCore, TIMER: DelayNs + Clone, Config: DriverConfig>
+    MacService<'svc, Rng, TIMER, Config>
 {
     /// Used by the next higher layer to request a reset operation that
     /// involves resetting the PAN Information Base
     async fn mlme_reset_request(&mut self, set_default_pib: bool) -> Result<ResetConfirm, ()> {
         if set_default_pib {
-            self.pib = pib::Pib::default();
+            self.pib = RefCell::new(pib::Pib::default());
         }
         Ok(ResetConfirm { status: true })
     }
