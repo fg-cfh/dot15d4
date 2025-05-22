@@ -89,9 +89,9 @@ impl<Bytes: AsRef<[u8]>> ExtendedAddress<Bytes> {
         be_bytes
     }
 
-    pub fn from_be_bytes(&self, mut be_bytes: [u8; 8]) -> ShortAddress<[u8; 8]> {
+    pub fn from_be_bytes(mut be_bytes: [u8; 8]) -> ExtendedAddress<[u8; 8]> {
         be_bytes.reverse();
-        ShortAddress::new(be_bytes)
+        ExtendedAddress::new(be_bytes)
     }
 }
 
