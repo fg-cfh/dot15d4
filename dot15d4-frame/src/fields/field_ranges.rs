@@ -217,7 +217,7 @@ impl MpduFieldRanges<MpduWithSecurity> {
     /// PHY-level headers/footers and _without the FCS_, i.e. the number of
     /// bytes consumed by the MAC header and MAC payload without the MAC footer.
     ///
-    /// See [`crate::driver::RadioFrameRepr::sdu_wo_fcs_length()`].
+    /// See [`dot15d4_driver::frame::RadioFrame::sdu_wo_fcs_length()`].
     #[cfg(feature = "ies")]
     pub(crate) const fn with_ies_and_mpdu_length<Config: DriverConfig>(
         &self,
@@ -255,7 +255,7 @@ impl MpduFieldRanges<MpduWithSecurity> {
     /// PHY-level headers/footers and _without the FCS_, i.e. the number of
     /// bytes consumed by the MAC header and MAC payload without the MAC footer.
     ///
-    /// See [`crate::driver::RadioFrameRepr::sdu_wo_fcs_length()`].
+    /// See [`dot15d4_driver::frame::RadioFrame::sdu_wo_fcs_length()`].
     pub(crate) const fn without_ies_with_mpdu_length<Config: DriverConfig>(
         &self,
         mpdu_length_wo_fcs: u16,
