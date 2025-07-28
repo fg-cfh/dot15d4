@@ -76,7 +76,7 @@ mod test {
             todo!()
         }
 
-        async fn wait_for_alarm() -> Instant<Self> {
+        async fn wait_until() -> Instant<Self> {
             todo!()
         }
     }

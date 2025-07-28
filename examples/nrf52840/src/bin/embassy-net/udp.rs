@@ -6,7 +6,7 @@ use panic_probe as _;
 use dot15d4_driver::{
     socs::nrf::{export::*, NrfRadioDriver},
     tasks::RadioDriver,
-    time::{now, wait_for_alarm_at, Duration, Milliseconds, Timer},
+    time::{now, wait_until, Duration, Milliseconds, Timer},
 };
 use dot15d4_embassy::{
     driver::Ieee802154Driver, export::*, mac_buffer_allocator, stack::Ieee802154Stack,
@@ -103,8 +103,8 @@ async fn main(spawner: Spawner) {
             const TIMEOUT: Duration<NrfTimer> =
                 Duration::<Milliseconds>::new(500).convert_into_rounding_up();
             let now = now::<NrfTimer>();
-            let at = now + TIMEOUT;
-            wait_for_alarm_at::<NrfTimer>(at).await;
+            let instant = now + TIMEOUT;
+            wait_until::<NrfTimer>(instant).await;
         }
     }
 }

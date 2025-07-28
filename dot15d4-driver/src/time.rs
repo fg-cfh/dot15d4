@@ -318,20 +318,12 @@ impl<F: Frequency> core::fmt::Display for Duration<F> {
 
 pub type Timer<RadioDriverImpl> = <RadioDriverImpl as DriverConfig>::Timer;
 
-pub fn now<Timer: RadioTimerApi>() -> Instant<Timer> {
+pub fn now<Timer: RadioTimerApi>() -> Instant<Nanoseconds> {
     Timer::now()
 }
 
-pub fn schedule_alarm<Timer: RadioTimerApi>(at: Instant<Timer>) {
-    Timer::schedule_alarm(at)
-}
-
-pub async fn wait_for_alarm<Timer: RadioTimerApi>() -> Instant<Timer> {
-    Timer::wait_for_alarm().await
-}
-
-pub async fn wait_for_alarm_at<Timer: RadioTimerApi>(at: Instant<Timer>) {
-    Timer::wait_for_alarm_at(at).await
+pub async fn wait_until<Timer: RadioTimerApi>(instant: Instant<Nanoseconds>) {
+    Timer::wait_until(instant).await
 }
 
 #[cfg(test)]

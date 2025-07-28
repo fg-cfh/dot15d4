@@ -1084,7 +1084,7 @@ where
         // Note: This is just a rough estimate with some safety margin for now.
         //       Precise timing requires timestamp and RX window support in the
         //       driver.
-        let timeout = RadioDriverImpl::Timer::wait_for_alarm_at(
+        let timeout = RadioDriverImpl::Timer::wait_until(
             RadioDriverImpl::Timer::now() + Self::DRIVER_RX_ACK_TIMEOUT,
         );
 

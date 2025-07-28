@@ -10,7 +10,7 @@ use core::{fmt::Debug, future::Future};
 
 use generic_array::ArrayLength;
 
-use crate::time::{Frequency, Instant};
+use crate::time::{Frequency, Instant, Nanoseconds};
 
 pub mod config;
 pub mod const_config;
@@ -81,26 +81,16 @@ pub trait RadioDriverApi {
     fn ieee802154_address(&self) -> [u8; 8];
 }
 
-pub trait RadioTimerApi: Frequency + Sized {
-    fn now() -> Instant<Self>;
+pub trait RadioTimerApi: Sized {
+    fn now() -> Instant<Nanoseconds>;
 
-    fn schedule_alarm(at: Instant<Self>);
-
-    /// Waits for the alarm programmed by [`RadioTimerApi::schedule_alarm()`].
+    /// Waits until the given instant, then wakes the current task.
     ///
-    /// Implementations SHALL be cancellable.
-    fn wait_for_alarm() -> impl Future<Output = Instant<Self>>;
-
-    /// Convenience method over [`RadioTimerApi::schedule_alarm()`] and
-    /// [`RadioTimerApi::wait_for_alarm()`].
-    fn wait_for_alarm_at(at: Instant<Self>) -> impl Future<Output = ()> {
-        let at_tick = at.tick();
-        Self::schedule_alarm(at);
-        async move {
-            let now = Self::wait_for_alarm().await;
-            debug_assert_eq!(now.tick(), at_tick)
-        }
-    }
+    /// Note: This method induces considerable latency and jitter as there may
+    ///       be an arbitrary delay between waking the task and the task
+    ///       executing. For more precisely timed alarms, use one of the
+    ///       hardware-backed methods
+    fn wait_until(instant: Instant<Nanoseconds>) -> impl Future<Output = ()>;
 }
 
 #[cfg(feature = "rtos-trace")]

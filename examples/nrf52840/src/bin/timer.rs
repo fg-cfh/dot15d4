@@ -5,7 +5,7 @@ use panic_probe as _;
 
 use dot15d4_driver::{
     socs::nrf::{export::*, NrfRadioDriver},
-    time::{now, wait_for_alarm_at, Duration, Milliseconds, Timer},
+    time::{now, wait_until, Duration, Milliseconds, Timer},
 };
 use embassy_executor::Spawner;
 
@@ -31,6 +31,6 @@ async fn main(_spawner: Spawner) {
     let mut count = 0;
     loop {
         count += 1;
-        wait_for_alarm_at::<NrfTimer>(anchor_time + count * TIMEOUT).await;
+        wait_until::<NrfTimer>(anchor_time + count * TIMEOUT).await;
     }
 }
