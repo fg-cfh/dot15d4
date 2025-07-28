@@ -45,7 +45,7 @@ use crate::{
         SelfRadioTransition, TaskOff, TaskRx, TaskTx, Timestamp, TxError, TxResult, TxState,
     },
     time::{Duration, Microseconds},
-    DriverConfig, FcsNone, RadioDriverApi,
+    DriverConfig, FcsNone, RadioDriverApi, RadioTimerApi,
 };
 
 use super::NrfRadioTimer;
@@ -401,9 +401,8 @@ impl OffState<NrfRadioDriver> for RadioDriver<NrfRadioDriver, TaskOff> {
         #[cfg(feature = "rtos-trace")]
         rtos_trace::trace::task_exec_begin(TASK_RX_SCHEDULE);
 
-        if let Timestamp::Scheduled(_) = rx_task.start {
-            // TODO: Implement timed RX.
-            todo!("not implemented")
+        if let Timestamp::Scheduled(expected_rx_rmarker) = rx_task.start {
+            <<NrfRadioDriver as DriverConfig>::Timer as RadioTimerApi>::wait_until(at)
         }
 
         let packetptr = rx_task.radio_frame.as_ptr() as u32;
