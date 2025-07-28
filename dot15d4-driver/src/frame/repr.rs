@@ -2,7 +2,7 @@ use typenum::Unsigned;
 
 use core::{fmt::Debug, marker::PhantomData, num::NonZero, ops::Range};
 
-use crate::DriverConfig;
+use crate::radio::DriverConfig;
 
 use super::{RadioFrameSized, RadioFrameUnsized};
 

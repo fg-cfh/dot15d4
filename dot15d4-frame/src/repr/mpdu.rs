@@ -2,7 +2,7 @@ use core::{marker::PhantomData, num::NonZero};
 
 use dot15d4_driver::{
     frame::{AddressingRepr, RadioFrameRepr, RadioFrameSized},
-    DriverConfig,
+    radio::DriverConfig,
 };
 use dot15d4_util::{Error, Result};
 
