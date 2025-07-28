@@ -1342,18 +1342,19 @@ fn prepare_tx_frame(radio_frame: &mut RadioFrame<RadioFrameSized>) -> u32 {
     radio_frame.as_ptr() as u32
 }
 
-/// NOTE: Must be preceded by a volatile write operation to the DMA pointer.
+/// NOTE: Must be preceded by a write operation to the DMA pointer.
 ///
-/// TODO: Is this actually correct?
+/// Correctness: Compiler experiments indicate that a compiler fence works in
+/// practice although according to the docs it should only have an effect in
+/// combination with atomic access.
 /// Also see <https://github.com/rust-lang/unsafe-code-guidelines/issues/260>.
 fn dma_start_fence() {
     compiler_fence(Ordering::Release);
 }
 
-/// NOTE: Must be followed by a volatile read operation to the DMA pointer.
+/// NOTE: Must be followed by a read operation to the DMA pointer.
 ///
-/// TODO: Is this actually correct?
-/// Also see <https://github.com/rust-lang/unsafe-code-guidelines/issues/260>.
+/// See [`dma_start_fence()`] for notes on correctness.
 fn dma_end_fence() {
     compiler_fence(Ordering::Acquire);
 }
