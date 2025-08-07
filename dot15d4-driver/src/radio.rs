@@ -104,7 +104,6 @@ pub(crate) mod trace {
         rtos_trace::trace::task_new_stackless(TASK_TRANSITION_TO_TX, "Transition to TX\0", 0);
         rtos_trace::trace::task_new_stackless(TASK_TX_RUN, "Tx\0", 0);
         rtos_trace::trace::task_new_stackless(TASK_FALL_BACK, "Off (fallback)\0", 0);
-        rtos_trace::trace::name_marker(MISSED_ISR, "Missed ISR\0");
         rtos_trace::trace::name_marker(TASK_RX_FRAME_STARTED, "Frame Started\0");
         rtos_trace::trace::name_marker(TASK_RX_FRAME_INFO, "Preliminary Frame Info\0");
     }
