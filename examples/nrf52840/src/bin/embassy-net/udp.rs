@@ -4,8 +4,8 @@
 use panic_probe as _;
 
 use dot15d4_driver::{
-    socs::nrf::{export::*, NrfRadioDriver, NrfRadioTimer},
-    tasks::RadioDriver,
+    radio::RadioDriver,
+    socs::nrf::{export::*, NrfRadioDriver},
     timer::{RadioTimerApi, RadioTimerResult, SyntonizedDuration},
 };
 use dot15d4_embassy::{
@@ -26,8 +26,8 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "rtos-trace")]
     dot15d4_util::trace::instrument();
 
-    let (clocks, peripherals) = dot15d4_examples_nrf52840::config_peripherals();
-    let radio = RadioDriver::new(peripherals.radio, clocks);
+    let (peripherals, clocks, timer) = dot15d4_examples_nrf52840::config_peripherals();
+    let radio = RadioDriver::new(peripherals.radio, clocks, timer);
     let buffer_allocator = mac_buffer_allocator!();
 
     static RADIO_STACK: StaticCell<Ieee802154Stack<NrfRadioDriver>> = StaticCell::new();
@@ -79,15 +79,15 @@ async fn main(spawner: Spawner) {
     socket.bind(9400).unwrap();
 
     let mut tx_count = 0;
-    let anchor_time = NrfRadioTimer::now();
+    let anchor_time = timer.now();
 
     loop {
-        // If we are 1 -> echo the result back
+        // If we are 1 -> echo the result back.
         if addr == 1 {
             let (n, ep) = socket.recv_from(&mut buf).await.unwrap();
             socket.send_to(&buf[..n], ep).await.unwrap();
         } else {
-            // If we are not 1 -> send a UDP packet to 1
+            // If we are not 1 -> send a UDP packet to 1.
             let ep = IpEndpoint::new(IpAddress::v6(0xfd0e, 0, 0, 0, 0, 0, 0, 1), 9400);
             socket.send_to(b"Hello, World !", ep).await.unwrap();
             let (_, _ep) = socket.recv_from(&mut buf).await.unwrap();
@@ -95,7 +95,9 @@ async fn main(spawner: Spawner) {
             tx_count += 1;
             // Safety: The main task runs at lowest priority and won't be migrated.
             let res = unsafe {
-                NrfRadioTimer::wait_until(anchor_time + ((tx_count + 1) * FRAME_PERIOD)).await
+                timer
+                    .wait_until(anchor_time + ((tx_count + 1) * FRAME_PERIOD))
+                    .await
             };
             debug_assert_eq!(res, RadioTimerResult::Ok);
         }

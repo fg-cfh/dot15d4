@@ -8,7 +8,7 @@ mod tsch;
 
 pub use dot15d4_frame as frame;
 
-use core::{cell::RefCell, marker::PhantomData};
+use core::cell::RefCell;
 
 use paste::paste;
 use rand_core::RngCore;
@@ -158,7 +158,7 @@ mac_svc_tasks!(DataRequest, DataIndication);
 /// PHY sublayer. It uses channels to communicate with upper layer tasks and
 /// with radio drivers.
 pub struct MacService<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> {
-    radio: PhantomData<RadioDriverImpl>,
+    timer: RadioDriverImpl::Timer,
     /// Pseudo-random number generator
     rng: &'svc mut Mutex<Rng>,
     /// Message buffer allocator
@@ -176,6 +176,7 @@ pub struct MacService<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> {
 impl<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> MacService<'svc, Rng, RadioDriverImpl> {
     /// Creates a new [`MacService<Rng, U, Timer, R>`].
     pub fn new(
+        timer: RadioDriverImpl::Timer,
         rng: &'svc mut Mutex<Rng>,
         buffer_allocator: MacBufferAllocator,
         request_receiver: MacRequestReceiver<'svc>,
@@ -183,7 +184,7 @@ impl<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> MacService<'svc, Rng, Ra
         driver_request_sender: DriverRequestSender<'svc>,
     ) -> Self {
         Self {
-            radio: PhantomData,
+            timer,
             rng,
             buffer_allocator,
             request_receiver,
