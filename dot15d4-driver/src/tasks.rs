@@ -7,13 +7,17 @@ use crate::{
     constants::A_MAX_SIFS_FRAME_SIZE,
     frame::{AddressingFields, FrameControl, RadioFrame, RadioFrameSized, RadioFrameUnsized},
     radio::DriverConfig,
-    timer::SyntonizedInstant,
+    timer::{SyntonizedInstant, TimedSignal},
 };
 
 use super::radio::RadioDriver;
 
 /// Tasks can be scheduled as fast as possible ("best effort") or at a
-/// well-defined tick of the local radio clock ("scheduled")
+/// well-defined tick of the local radio clock ("scheduled").
+///
+/// The timestamp is represented as a [`SyntonizedInstant`] in terms of the
+/// radio driver's local timer, i.e. the timestamp must already have been
+/// compensated for clock drift.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Timestamp {
     /// A task with this timestamp will be executed back-to-back to the previous
@@ -21,13 +25,11 @@ pub enum Timestamp {
     BestEffort,
     /// A task with this timestamp will be executed by the driver at a precisely
     /// defined time. The semantics of the timestamp depends on the task that's
-    /// being scheduled:
-    /// - TX: Designates the time at which the RMARKER SHALL pass the local
-    ///   antenna.
-    /// - RX: Designates the time at which the RMARKER is expected to pass the
-    ///   local antenna.
-    /// - Radio Off: Designates the time at which the radio will start to
-    ///   ramp-down.
+    /// being scheduled (see the corresponding task's definition).
+    ///
+    /// Usually the timestamp will be related to the RMARKER of a frame. For all
+    /// PHYs the RMARKER is defined to be the time when the beginning of the
+    /// first symbol following the SFD of the frame is at the local antenna.
     Scheduled(SyntonizedInstant),
 }
 
@@ -93,7 +95,10 @@ pub trait RadioTask {
 /// Task: switch to low energy state
 #[derive(Debug, PartialEq, Eq)]
 pub struct TaskOff {
-    /// Designates the time at which the radio will start to ramp-down.
+    /// The driver SHALL cut off ongoing reception or transmission at the given
+    /// time if an off task is scheduled with a timestamp. If this behavior is
+    /// to be avoided, then Rx/Tx tasks SHALL be followed by a best-effort off
+    /// task.
     pub at: Timestamp,
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -133,7 +138,14 @@ impl RadioTask for TaskOff {
 /// frame.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TaskRx {
-    /// the time at which the RMARKER is expected to pass the local antenna
+    /// The earliest time at which a frame with this RMARKER passing the local
+    /// antenna SHALL be recognized. The receiver SHALL be switched on as late
+    /// as possible to minimize energy consumption.
+    ///
+    /// Note: We do not define Rx window duration at the radio driver level.
+    ///       Schedule a [`TaskOff`] instead to end an Rx window. It's the
+    ///       responsibility of the driver service to compensate for clock drift
+    ///       and insert guard times.
     pub start: Timestamp,
 
     /// radio frame allocated to receive incoming frames
@@ -214,8 +226,8 @@ impl RadioTask for TaskRx {
 /// ensure that the AR flag is properly set in the frame header.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TaskTx {
-    /// the time at which the RMARKER of the sent frame SHALL pass the local
-    /// antenna
+    /// the time at which the RMARKER of the outbound frame SHALL pass the local
+    /// antenna.
     pub at: Timestamp,
 
     /// radio frame to be sent
@@ -244,6 +256,11 @@ pub enum TxError {
     /// CCA detected a busy medium.
     CcaBusy(
         /// The radio frame that could not be sent.
+        RadioFrame<RadioFrameSized>,
+    ),
+    /// The task was interrupted due to a subsequent timed task.
+    Interrupted(
+        /// The partially sent radio frame.
         RadioFrame<RadioFrameSized>,
     ),
 }
@@ -309,6 +326,9 @@ pub trait RadioState<Task: RadioTask> {
 
     /// Waits until the current state's task ("do activity") is complete.
     ///
+    /// In case of a "best effort" task this waits until the current state exits
+    /// by itself. Timed tasks end when the scheduled timed transition fires.
+    ///
     /// Any transition-specific "on_task_complete" behavior will be executed
     /// right after this method returns.
     ///
@@ -323,6 +343,7 @@ pub trait RadioState<Task: RadioTask> {
     ///       method is being called.
     fn run(
         &mut self,
+        timed_transition: Option<TimedSignal>,
         alt_outcome_is_error: bool,
     ) -> impl Future<Output = Result<Task::Result, RadioTaskError<Task>>>;
 
@@ -493,6 +514,9 @@ pub trait RxState<RadioDriverImpl: DriverConfig>: RadioState<TaskRx> {
     ///
     /// See the trait documentation for an explanation of the
     /// `rollback_on_crcerror` flag.`
+    ///
+    /// If the task is timed, i.e. defines a `start` timestamp, the IFS SHALL be
+    /// ignored and SHOULD be set to [`Ifs::None`].
     fn schedule_tx(
         self,
         tx_task: TaskTx,
@@ -517,6 +541,9 @@ pub trait RxState<RadioDriverImpl: DriverConfig>: RadioState<TaskRx> {
 /// the transmitter is idle but the radio is still powered (TX idle).
 pub trait TxState<RadioDriverImpl: DriverConfig>: RadioState<TaskTx> {
     /// Schedules a transition to the RX state.
+    ///
+    /// If the task is timed, i.e. defines a `start` timestamp, the IFS SHALL be
+    /// ignored and SHOULD be set to [`Ifs::None`].
     fn schedule_rx(
         self,
         task: TaskRx,
@@ -549,6 +576,9 @@ pub trait TxState<RadioDriverImpl: DriverConfig>: RadioState<TaskTx> {
     /// schedule the next TX task early enough such that condition 3 holds. But
     /// for stability and correctness we SHALL deal with the other two
     /// (exceptional) cases, too. We'll emit a warning, though.
+    ///
+    /// If the task is timed, i.e. defines an `at` timestamp, the IFS SHALL
+    /// be ignored and SHOULD be set to [`Ifs::None`].
     fn schedule_tx(
         self,
         tx_task: TaskTx,
@@ -579,6 +609,9 @@ pub struct RadioTransition<
 
     /// Configuration and parameters of the target radio peripheral state.
     next_task: NextTask,
+
+    /// In case of a timed task: its timed transition.
+    timed_transition: Option<TimedSignal>,
 
     /// Callback executed as soon as the transition is being scheduled.
     ///
@@ -644,6 +677,7 @@ impl<
     pub fn new(
         from_radio: RadioDriver<RadioDriverImpl, ThisTask>,
         next_task: NextTask,
+        timed_transition: Option<TimedSignal>,
         on_scheduled: OnScheduled,
         on_task_complete: OnTaskComplete,
         cleanup: Cleanup,
@@ -653,6 +687,7 @@ impl<
             from_radio,
             to_radio: PhantomData,
             next_task,
+            timed_transition,
             on_scheduled,
             on_task_complete,
             cleanup,
@@ -724,7 +759,11 @@ where
             );
         }
 
-        let prev_task_result = match self.from_radio.run(self.alt_outcome_is_error).await {
+        let prev_task_result = match self
+            .from_radio
+            .run(self.timed_transition, self.alt_outcome_is_error)
+            .await
+        {
             Err(task_error) => {
                 #[cfg(feature = "rtos-trace")]
                 rtos_trace::trace::task_exec_end();
@@ -863,7 +902,11 @@ where
             );
         }
 
-        let prev_task_result = match self.from_radio.run(self.alt_outcome_is_error).await {
+        let prev_task_result = match self
+            .from_radio
+            .run(self.timed_transition, self.alt_outcome_is_error)
+            .await
+        {
             Err(scheduling_error) => {
                 let _ = (self.cleanup)();
                 return CompletedRadioTransition::Rollback(
