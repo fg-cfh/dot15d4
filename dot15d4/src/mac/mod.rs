@@ -11,7 +11,6 @@ pub use dot15d4_frame as frame;
 use core::cell::RefCell;
 
 use paste::paste;
-use rand_core::RngCore;
 
 use crate::{
     driver::{
@@ -25,7 +24,6 @@ use crate::{
         allocator::{BufferAllocator, IntoBuffer},
         sync::{
             channel::{Channel, Receiver, Sender},
-            mutex::Mutex,
             select, Either, MatchingResponse, PollingResponseToken, ResponseToken,
         },
     },
@@ -157,10 +155,8 @@ mac_svc_tasks!(DataRequest, DataIndication);
 /// the main event loop that handles interactions between an upper layer and the
 /// PHY sublayer. It uses channels to communicate with upper layer tasks and
 /// with radio drivers.
-pub struct MacService<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> {
+pub struct MacService<'svc, RadioDriverImpl: DriverConfig> {
     timer: RadioDriverImpl::Timer,
-    /// Pseudo-random number generator
-    rng: &'svc mut Mutex<Rng>,
     /// Message buffer allocator
     buffer_allocator: MacBufferAllocator,
     /// Upper layer channel from which MAC requests are received.
@@ -173,11 +169,10 @@ pub struct MacService<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> {
     pib: RefCell<Pib>,
 }
 
-impl<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> MacService<'svc, Rng, RadioDriverImpl> {
-    /// Creates a new [`MacService<Rng, U, Timer, R>`].
+impl<'svc, RadioDriverImpl: DriverConfig> MacService<'svc, RadioDriverImpl> {
+    /// Creates a new [`MacService<U, Timer, R>`].
     pub fn new(
         timer: RadioDriverImpl::Timer,
-        rng: &'svc mut Mutex<Rng>,
         buffer_allocator: MacBufferAllocator,
         request_receiver: MacRequestReceiver<'svc>,
         indication_sender: MacIndicationSender<'svc>,
@@ -185,7 +180,6 @@ impl<'svc, Rng: RngCore, RadioDriverImpl: DriverConfig> MacService<'svc, Rng, Ra
     ) -> Self {
         Self {
             timer,
-            rng,
             buffer_allocator,
             request_receiver,
             indication_sender,
