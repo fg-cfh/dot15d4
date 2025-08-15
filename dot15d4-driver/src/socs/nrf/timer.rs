@@ -127,7 +127,7 @@ const ALARM_CHANNELS: [AlarmChannel; NUM_ALARM_CHANNELS] = [AlarmChannel::Cpu, A
 // Safety: As we are on the single-core nRF platform we don't need to
 //         synchronize atomic operations via CPU memory barriers. It is
 //         sufficient to place appropriate compiler fences.
-pub struct NrfRadioTimer {
+struct State {
     /// Number of half counter periods elapsed since boot.
     ///
     /// Safety: This needs to be atomic as it will be shared between the
@@ -146,7 +146,7 @@ pub struct NrfRadioTimer {
     ppi_gpiote_out_channel: AtomicUsize,
 }
 
-impl NrfRadioTimer {
+impl State {
     const RTC_FREQUENCY: TimerRateU32<32_768> = TimerRateU32::from_raw(1);
     const TIMER_FREQUENCY: TimerRateU32<16_000_000> = TimerRateU32::from_raw(1);
 
@@ -177,12 +177,13 @@ impl NrfRadioTimer {
         unsafe { Peripherals::steal() }.PPI
     }
 
-    /// Takes exclusive ownership of the RTC peripheral and initializes the
-    /// driver.
+    /// Takes exclusive ownership of the RTC and TIMER peripherals and
+    /// initializes the driver.
     ///
     /// This must be called during early initialization before any concurrent
     /// critical sections may be active.
     pub fn init(
+        &self,
         rtc: RTC0,
         timer: TIMER0,
         gpiote: &GPIOTE,
@@ -202,7 +203,7 @@ impl NrfRadioTimer {
         // Safety: The channel has been asserted to be in range.
         ppi.chenset
             .write(|w| unsafe { w.bits(1 << ppi_gpiote_out_channel) });
-        INSTANCE
+        STATE
             .ppi_gpiote_out_channel
             .store(ppi_gpiote_out_channel, Ordering::Relaxed);
 
@@ -494,7 +495,7 @@ impl NrfRadioTimer {
         // is not safe because the RTC can tick from N to N+1 between calling
         // now() and writing to the CC register.
         let rtc_now_tick = self.rtc_now_tick();
-        if rtc_tick <= rtc_now_tick + NrfRadioTimer::RTC_GUARD_TICKS {
+        if rtc_tick <= rtc_now_tick + State::RTC_GUARD_TICKS {
             self.fire_alarm(channel);
             return RadioTimerResult::Overdue;
         }
@@ -708,14 +709,14 @@ impl NrfRadioTimer {
     }
 }
 
-static INSTANCE: NrfRadioTimer = NrfRadioTimer::new();
+static STATE: State = State::new();
 
 #[interrupt]
 fn RTC0() {
     #[cfg(feature = "rtos-trace")]
     rtos_trace::trace::isr_enter();
 
-    INSTANCE.on_rtc_interrupt();
+    STATE.on_rtc_interrupt();
 
     #[cfg(feature = "rtos-trace")]
     rtos_trace::trace::isr_exit();
@@ -726,7 +727,7 @@ fn TIMER0() {
     #[cfg(feature = "rtos-trace")]
     rtos_trace::trace::isr_enter();
 
-    INSTANCE.on_timer_interrupt();
+    STATE.on_timer_interrupt();
 
     #[cfg(feature = "rtos-trace")]
     rtos_trace::trace::isr_exit();
@@ -739,9 +740,9 @@ impl NrfRadioTimer {
     const MAX_NS: u128 = u64::MAX as u128;
     const NS_PER_S: u128 = 1_000_000_000;
     const MAX_RTC_TICKS: u64 =
-        ((Self::MAX_NS * NrfRadioTimer::RTC_FREQUENCY.to_Hz() as u128) / Self::NS_PER_S) as u64;
+        ((Self::MAX_NS * State::RTC_FREQUENCY.to_Hz() as u128) / Self::NS_PER_S) as u64;
     const MAX_TIMER_TICKS: u64 =
-        ((Self::MAX_NS * NrfRadioTimer::TIMER_FREQUENCY.to_Hz() as u128) / Self::NS_PER_S) as u64;
+        ((Self::MAX_NS * State::TIMER_FREQUENCY.to_Hz() as u128) / Self::NS_PER_S) as u64;
 
     const fn rtc_tick_to_ns(rtc_tick: u64) -> SyntonizedInstant {
         debug_assert!(rtc_tick <= Self::MAX_RTC_TICKS);
@@ -754,7 +755,7 @@ impl NrfRadioTimer {
         //              = (ticks * (10^9 / 2^15)) ns
         //              = (ticks * (5^9 / 2^6)) ns
         //              = ((ticks * 5^9) >> 6) ns
-        const _: () = assert!(NrfRadioTimer::RTC_FREQUENCY.to_Hz() == 2_u32.pow(15));
+        const _: () = assert!(State::RTC_FREQUENCY.to_Hz() == 2_u32.pow(15));
 
         // Safety: Representing MAX_RTC_TICKS requires 50 bits. Multiplying by
         //         5^9 requires another 21 bits. We therefore have to calculate
@@ -846,24 +847,54 @@ impl NrfRadioTimer {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NrfRadioTimer {
+    // Private field to inhibit direct instantiation.
+    inner: (),
+}
+
+impl NrfRadioTimer {
+    /// Instantiate the timer for the first time. Consumes the required
+    /// peripherals. Further copies can then be created.
+    pub fn new(
+        rtc: RTC0,
+        timer: TIMER0,
+        gpiote: &GPIOTE,
+        gpiote_channel: usize,
+        ppi: &PPI,
+        ppi_gpiote_out_channel: usize,
+    ) -> Self {
+        STATE.init(
+            rtc,
+            timer,
+            gpiote,
+            gpiote_channel,
+            ppi,
+            ppi_gpiote_out_channel,
+        );
+        Self { inner: () }
+    }
+}
+
 impl RadioTimerApi for NrfRadioTimer {
-    fn now() -> SyntonizedInstant {
-        let ticks = INSTANCE.rtc_now_tick();
+    fn now(&self) -> SyntonizedInstant {
+        let ticks = STATE.rtc_now_tick();
         Self::rtc_tick_to_ns(ticks)
     }
 
-    async unsafe fn wait_until(instant: SyntonizedInstant) -> RadioTimerResult {
+    async unsafe fn wait_until(&self, instant: SyntonizedInstant) -> RadioTimerResult {
         let (rtc_tick, _) = Self::ns_to_alarm_ticks(instant);
 
         #[cfg(feature = "rtos-trace")]
         crate::timer::trace::record_schedule_alarm(instant.ticks() as u32, rtc_tick as u32);
 
-        INSTANCE
+        STATE
             .wait_for_alarm(rtc_tick, 0, AlarmChannel::Cpu, None)
             .await
     }
 
     async unsafe fn schedule_event(
+        &self,
         instant: SyntonizedInstant,
         signal: HardwareSignal,
     ) -> RadioTimerResult {
@@ -876,7 +907,7 @@ impl RadioTimerApi for NrfRadioTimer {
             remaining_timer_ticks as u32,
         );
 
-        INSTANCE
+        STATE
             .wait_for_alarm(
                 rtc_tick,
                 remaining_timer_ticks,
@@ -901,7 +932,7 @@ const _: () = {
     let rtc_ticks_ns = NrfRadioTimer::rtc_tick_to_ns(rtc_ticks).ticks();
     assert!(rtc_ticks_ns == u64::MAX - EXPECTED_REMAINDER_RTC_NS);
 
-    const EXPECTED_REMAINDER_TIMER_TICKS: u16 = ((NrfRadioTimer::TIMER_FREQUENCY.to_Hz() as u64
+    const EXPECTED_REMAINDER_TIMER_TICKS: u16 = ((State::TIMER_FREQUENCY.to_Hz() as u64
         * EXPECTED_REMAINDER_RTC_NS)
         / NrfRadioTimer::NS_PER_S as u64) as u16;
     assert!(remaining_timer_ticks == EXPECTED_REMAINDER_TIMER_TICKS);
