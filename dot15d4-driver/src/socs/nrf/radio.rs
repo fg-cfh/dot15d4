@@ -58,8 +58,8 @@ use crate::{
         SelfRadioTransition, TaskOff, TaskRx, TaskTx, Timestamp, TxError, TxResult, TxState,
     },
     timer::{
-        HardwareSignal, RadioTimerApi, RadioTimerResult, SymbolsOQpsk250Duration,
-        SyntonizedDuration, TimedSignal,
+        HardwareSignal, LocalClockDuration, RadioTimerApi, RadioTimerResult,
+        SymbolsOQpsk250Duration, TimedSignal,
     },
 };
 
@@ -77,19 +77,19 @@ pub mod export {
 const _: () = assert!(PHY_CCA_DURATION.ticks() == 8);
 
 // Disabled to Tx Idle duration
-const T_TXEN: SyntonizedDuration = SyntonizedDuration::micros(130);
+const T_TXEN: LocalClockDuration = LocalClockDuration::micros(130);
 // Tx Idle to Disabled duration
-const T_TXDIS: SyntonizedDuration = SyntonizedDuration::micros(21);
+const T_TXDIS: LocalClockDuration = LocalClockDuration::micros(21);
 // Disabled to Rx Idle duration
-const T_RXEN: SyntonizedDuration = SyntonizedDuration::micros(130);
+const T_RXEN: LocalClockDuration = LocalClockDuration::micros(130);
 // Rx Idle to Disabled duration
-const T_RXDIS: SyntonizedDuration = SyntonizedDuration::nanos(500);
+const T_RXDIS: LocalClockDuration = LocalClockDuration::nanos(500);
 // CCA duration
-const T_CCA: SyntonizedDuration = PHY_CCA_DURATION.convert();
+const T_CCA: LocalClockDuration = PHY_CCA_DURATION.convert();
 // Rx-to-Tx and Tx-to-Rx duration
-const T_TURNAROUND: SyntonizedDuration = SyntonizedDuration::micros(40);
+const T_TURNAROUND: LocalClockDuration = LocalClockDuration::micros(40);
 // SHR duration: preamble (8 symbols) + SFD (2 symbols)
-const T_SHR: SyntonizedDuration = SymbolsOQpsk250Duration::from_ticks(10).convert();
+const T_SHR: LocalClockDuration = SymbolsOQpsk250Duration::from_ticks(10).convert();
 
 /// This struct serves multiple purposes:
 /// 1. It provides access to private radio driver state across typestates of the
@@ -315,7 +315,7 @@ impl RadioDriver<NrfRadioDriver, TaskOff> {
     const fn timed_dis_to_rx(rx_task: &TaskRx) -> Option<TimedSignal> {
         if let Timestamp::Scheduled(rx_timestamp) = rx_task.start {
             // RMARKER offset: Disabled -> Rx -> SHR
-            const OFFSET: SyntonizedDuration = T_RXEN.checked_add(T_SHR).unwrap();
+            const OFFSET: LocalClockDuration = T_RXEN.checked_add(T_SHR).unwrap();
             Some(TimedSignal::new(
                 rx_timestamp.checked_sub_duration(OFFSET).unwrap(),
                 HardwareSignal::RadioRxEnable,
@@ -329,7 +329,7 @@ impl RadioDriver<NrfRadioDriver, TaskOff> {
         if let Timestamp::Scheduled(tx_timestamp) = tx_task.at {
             let timed_signal = if tx_task.cca {
                 // RMARKER offset with CCA: Disabled -> Rx -> CCA -> Turnaround -> SHR
-                const OFFSET_DIS_TO_TX_W_CCA: SyntonizedDuration = T_RXEN
+                const OFFSET_DIS_TO_TX_W_CCA: LocalClockDuration = T_RXEN
                     .checked_add(T_CCA)
                     .unwrap()
                     .checked_add(T_TURNAROUND)
@@ -344,7 +344,7 @@ impl RadioDriver<NrfRadioDriver, TaskOff> {
                 )
             } else {
                 // RMARKER offset without CCA: Disabled -> Tx -> SHR
-                const OFFSET_DIS_TO_TX_NO_CCA: SyntonizedDuration =
+                const OFFSET_DIS_TO_TX_NO_CCA: LocalClockDuration =
                     T_TXEN.checked_add(T_SHR).unwrap();
                 TimedSignal::new(
                     tx_timestamp
@@ -589,7 +589,7 @@ impl RadioDriver<NrfRadioDriver, TaskRx> {
         if let Timestamp::Scheduled(tx_timestamp) = tx_task.at {
             let timed_signal = if tx_task.cca {
                 // RMARKER offset with CCA: CCA -> Turnaround -> SHR
-                const OFFSET_RX_TO_TX_W_CCA: SyntonizedDuration = T_CCA
+                const OFFSET_RX_TO_TX_W_CCA: LocalClockDuration = T_CCA
                     .checked_add(T_TURNAROUND)
                     .unwrap()
                     .checked_add(T_SHR)
@@ -605,7 +605,7 @@ impl RadioDriver<NrfRadioDriver, TaskRx> {
                 )
             } else {
                 // RMARKER offset without CCA: Rx -> Disabled -> Tx -> SHR
-                const OFFSET_RX_TO_TX_NO_CCA: SyntonizedDuration = T_RXDIS
+                const OFFSET_RX_TO_TX_NO_CCA: LocalClockDuration = T_RXDIS
                     .checked_add(T_TXEN)
                     .unwrap()
                     .checked_add(T_SHR)
@@ -1186,7 +1186,7 @@ impl RadioDriver<NrfRadioDriver, TaskTx> {
     const fn timed_tx_to_rx(rx_task: &TaskRx) -> Option<TimedSignal> {
         if let Timestamp::Scheduled(rx_timestamp) = rx_task.start {
             // RMARKER offset: Tx -> Disabled -> Rx -> SHR
-            const OFFSET_TX_TO_RX: SyntonizedDuration = T_TXDIS
+            const OFFSET_TX_TO_RX: LocalClockDuration = T_TXDIS
                 .checked_add(T_RXEN)
                 .unwrap()
                 .checked_add(T_SHR)
@@ -1204,7 +1204,7 @@ impl RadioDriver<NrfRadioDriver, TaskTx> {
         if let Timestamp::Scheduled(tx_timestamp) = tx_task.at {
             let offset = if tx_task.cca {
                 // RMARKER offset with CCA: Tx -> Disabled -> Rx -> CCA -> Turnaround -> SHR
-                const OFFSET_TX_TO_TX_W_CCA: SyntonizedDuration = T_TXDIS
+                const OFFSET_TX_TO_TX_W_CCA: LocalClockDuration = T_TXDIS
                     .checked_add(T_RXEN)
                     .unwrap()
                     .checked_add(T_CCA)
@@ -1216,7 +1216,7 @@ impl RadioDriver<NrfRadioDriver, TaskTx> {
                 OFFSET_TX_TO_TX_W_CCA
             } else {
                 // RMARKER offset without CCA: Tx -> Disabled -> Tx -> SHR
-                const OFFSET_TX_TO_TX_NO_CCA: SyntonizedDuration = T_TXDIS
+                const OFFSET_TX_TO_TX_NO_CCA: LocalClockDuration = T_TXDIS
                     .checked_add(T_TXEN)
                     .unwrap()
                     .checked_add(T_SHR)
