@@ -3,7 +3,7 @@
 
 use panic_probe as _;
 
-use dot15d4_driver::{
+use dot15d4::driver::{
     radio::RadioDriver,
     socs::nrf::NrfRadioDriver,
     timer::{LocalClockDuration, RadioTimerApi, RadioTimerResult},
@@ -24,7 +24,7 @@ const FRAME_PERIOD: LocalClockDuration = LocalClockDuration::millis(10);
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     #[cfg(feature = "rtos-trace")]
-    dot15d4_util::trace::instrument();
+    dot15d4::util::trace::instrument();
 
     let (peripherals, clocks, timer) = dot15d4_examples_nrf52840::config_peripherals();
     let radio = RadioDriver::new(peripherals.radio, clocks, timer);

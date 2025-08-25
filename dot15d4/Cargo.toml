@@ -48,7 +48,8 @@ security = ["dot15d4-frame/security"]
 ies = ["dot15d4-frame/ies"]
 
 # Tracing
-rtos-trace = ["dep:rtos-trace", "log"]
+gpio-trace = ["dot15d4-driver/gpio-trace"]
+rtos-trace = ["dep:rtos-trace", "dot15d4-util/rtos-trace", "log"]
 
 _clippy-std = ["std", "fuzz"]
 _clippy-no-std = ["rtos-trace"]
